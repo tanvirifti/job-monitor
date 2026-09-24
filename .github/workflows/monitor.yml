@@ -2,10 +2,13 @@ name: Check for new jobs
 
 on:
   schedule:
-    # 07:00 and 17:00 UK time. Cron here is UTC, and GitHub sometimes runs
-    # scheduled jobs a few minutes late when it is busy. That is fine.
+    # 07:00 UK time. Cron is UTC here, and GitHub runs scheduled jobs a few
+    # minutes late when it is busy, which does not matter for this.
+    #
+    # Once a day rather than twice: 17 queries per run is 510 Adzuna calls a
+    # month, comfortably inside the free allowance of 1,000. Twice daily
+    # would overshoot it.
     - cron: "0 6 * * *"
-    - cron: "0 16 * * *"
   workflow_dispatch:        # lets you trigger a run by hand from the Actions tab
 
 permissions:

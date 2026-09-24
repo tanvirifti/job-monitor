@@ -30,16 +30,17 @@ ADZUNA_WHERE = "london"
 # run fails; duplicates get filtered out anyway.
 ADZUNA_MAX_DAYS_OLD = 7
 
-# Civil Service Jobs search terms. This one site carries ONS, Cabinet
-# Office, DWP, HMRC, DfT, MoJ, Ofcom, Environment Agency and the Met
-# Office, which is most of your Tier 1 list.
-CIVIL_SERVICE_QUERIES = [
-    "data analyst",
-    "graduate",
-    "statistician",
-    "data scientist",
-    "intern",
-    "placement",
+# Tier 1 employers, searched by name through Adzuna. Scraping Civil
+# Service Jobs directly was tried first and returned nothing; its markup
+# is not stable enough to depend on. Adzuna indexes these employers
+# already, so asking it by name is both simpler and harder to break.
+PUBLIC_SECTOR_EMPLOYERS = [
+    "Office for National Statistics",
+    "Civil Service data",
+    "NHS data analyst",
+    "Transport for London analyst",
+    "Met Office data",
+    "Environment Agency data",
 ]
 
 # ---------------------------------------------------------------- filtering

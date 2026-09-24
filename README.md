@@ -11,11 +11,10 @@ live is worth more than checking twenty career pages by hand each week.
 ## What it does
 
 ```
-GitHub Actions (07:00 and 17:00 UK)
+GitHub Actions (07:00 UK, daily)
    │
-   ├── Adzuna API          eight searches, aggregates most UK job boards
-   ├── Civil Service Jobs  covers ONS, Cabinet Office, DWP, HMRC, DfT,
-   │                       MoJ, Ofcom, Environment Agency, Met Office
+   ├── Adzuna API          11 role searches across UK job boards
+   ├── Adzuna by employer  6 Tier 1 public sector employers by name
    │
    ├── filter              drops senior roles and anything outside the UK
    ├── compare             against seen_jobs.json, committed back each run
@@ -36,8 +35,13 @@ their listings in JavaScript, which needs a headless browser and turns a
 free job into a few hundred pounds a month.
 
 Aggregators already did that crawl. Adzuna covers thousands of UK employers
-and its free tier allows 1,000 calls a month; this uses about 480. Civil
-Service Jobs is one site that happens to hold most of the target list.
+and its free tier allows 1,000 calls a month; this uses about 510.
+
+Civil Service Jobs was the original second source, since it carries most of
+the Tier 1 list in one place. Scraping it returned nothing on the first run
+and its markup is not stable enough to keep guessing at, so those employers
+are now searched by name through Adzuna instead. An aggregator that
+publishes an API is a safer dependency than a page scrape.
 
 ## Setup
 
@@ -105,11 +109,10 @@ letting it send anything.
 
 ## Known limits
 
-**Civil Service Jobs is the fragile part.** It has no public API, so this
-reads the search results page. If the markup changes the parse stops
-finding things. It fails quietly by design, so a broken parse never takes
-down the Adzuna half of the run. Worth checking the Actions log
-occasionally rather than assuming silence means no jobs.
+**Everything depends on Adzuna.** One source means one point of failure. If
+their index lags or the free tier changes, the whole thing goes quiet. Worth
+glancing at the Actions log now and then rather than reading silence as
+"nothing is being advertised".
 
 **Adzuna's index is not instant.** A posting can appear on a company site
 some hours before it reaches the aggregator. For the handful of employers

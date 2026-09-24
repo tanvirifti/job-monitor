@@ -152,56 +152,52 @@ def fetch_adzuna():
 
 def fetch_civil_service():
     """
-    Civil Service Jobs carries most of the Tier 1 list in one place.
+    Civil Service Jobs carries most of the Tier 1 list: ONS, Cabinet Office,
+    DWP, HMRC, DfT, MoJ, Ofcom, Environment Agency, the Met Office.
 
-    The site is a CGI application with no documented API, so this reads the
-    public search results page. It is the fragile part of the pipeline: if
-    they change their markup it stops finding things. It fails quietly on
-    purpose, so a broken parse never takes the whole run down.
+    It is a CGI application with no API and no stable query string, and the
+    first attempt at reading its search page returned nothing at all. Rather
+    than keep guessing at markup that can change without notice, this asks
+    Adzuna for the same employers by name. Adzuna already indexes them, and
+    an aggregator that publishes an API is a far safer dependency than a
+    page scrape.
+
+    Costs a few extra API calls, well within the free monthly allowance.
     """
-    base = "https://www.civilservicejobs.service.gov.uk/csr/index.cgi"
-    found = []
+    if not (ADZUNA_ID and ADZUNA_KEY):
+        return []
 
-    for query in config.CIVIL_SERVICE_QUERIES:
+    found = []
+    for employer in config.PUBLIC_SECTOR_EMPLOYERS:
+        url = (
+            "https://api.adzuna.com/v1/api/jobs/gb/search/1"
+            f"?app_id={ADZUNA_ID}&app_key={ADZUNA_KEY}"
+            f"&results_per_page=25"
+            f"&what={quote_plus(employer)}"
+            f"&max_days_old={config.ADZUNA_MAX_DAYS_OLD}"
+            "&content-type=application/json"
+        )
         try:
-            r = requests.get(
-                base,
-                params={"pagecode": "search", "searchsort": "closingsoon", "what": query},
-                headers=HEADERS,
-                timeout=25,
-            )
+            r = requests.get(url, headers=HEADERS, timeout=25)
             r.raise_for_status()
-            html = r.text
+            results = r.json().get("results", [])
         except Exception as exc:
-            log.error("Civil Service query %r failed: %s", query, exc)
+            log.error("public sector query %r failed: %s", employer, exc)
             continue
 
-        # Each result sits in a block with a link to a job id.
-        pattern = re.compile(
-            r'<a[^>]+href="([^"]*jcode=[^"]*)"[^>]*>(.*?)</a>', re.I | re.S
-        )
-        hits = pattern.findall(html)
-
-        for href, raw_title in hits:
-            title = strip_tags(raw_title).strip()
-            if not title or len(title) < 6:
-                continue
-            link = href if href.startswith("http") else (
-                "https://www.civilservicejobs.service.gov.uk" + href
-            )
+        for j in results:
             found.append(
                 {
-                    "source": "Civil Service Jobs",
-                    "company": "Civil Service",
-                    "title": title,
-                    "location": "UK",
-                    "url": link,
-                    "posted": "",
+                    "source": "Public sector",
+                    "company": (j.get("company") or {}).get("display_name", "Unknown"),
+                    "title": strip_tags(j.get("title", "")),
+                    "location": (j.get("location") or {}).get("display_name", ""),
+                    "url": j.get("redirect_url", ""),
+                    "posted": j.get("created", ""),
                 }
             )
-
-        log.info("CivilService %-30r %3d raw hits", query, len(hits))
-        time.sleep(0.6)
+        log.info("PublicSector %-30r %3d results", employer, len(results))
+        time.sleep(0.4)
 
     return found
 
@@ -214,6 +210,14 @@ def strip_tags(text):
 
 
 def send_telegram(jobs):
+    """
+    Sends a plain-text message. Telegram's Markdown mode rejects perfectly
+    ordinary job titles (brackets, underscores, stray asterisks), which is
+    what produced a 400 on the first run. Plain text cannot fail that way.
+
+    Returns True only if the message actually went out, so the caller knows
+    whether it is safe to mark these jobs as seen.
+    """
     if not (TG_TOKEN and TG_CHAT):
         log.warning("Telegram not configured, printing instead")
         for j in jobs:
@@ -223,17 +227,15 @@ def send_telegram(jobs):
     shown = jobs[: config.MAX_PER_ALERT]
     extra = len(jobs) - len(shown)
 
-    lines = [f"*{len(jobs)} new role{'s' if len(jobs) != 1 else ''}*", ""]
+    lines = [f"{len(jobs)} new role{'s' if len(jobs) != 1 else ''}", ""]
     for j in shown:
-        title = escape_md(j["title"])
-        company = escape_md(j["company"])
-        loc = escape_md(j["location"][:38])
-        lines.append(f"*{title}*")
-        lines.append(f"{company} · {loc} · _{j['source']}_")
+        lines.append(j["title"])
+        bits = [b for b in (j["company"], j["location"][:38], j["source"]) if b]
+        lines.append(" | ".join(bits))
         lines.append(j["url"])
         lines.append("")
     if extra:
-        lines.append(f"_and {extra} more_")
+        lines.append(f"and {extra} more")
 
     text = "\n".join(lines)[:4000]
 
@@ -243,16 +245,19 @@ def send_telegram(jobs):
             json={
                 "chat_id": TG_CHAT,
                 "text": text,
-                "parse_mode": "Markdown",
                 "disable_web_page_preview": True,
             },
             timeout=20,
         )
-        r.raise_for_status()
+        if r.status_code != 200:
+            # the body says exactly what Telegram objected to
+            log.error("Telegram refused the message: %s %s",
+                      r.status_code, r.text[:300])
+            return False
         log.info("alert sent to Telegram")
         return True
     except Exception as exc:
-        log.error("Telegram send failed: %s", exc)
+        log.error("Telegram request failed: %s", exc)
         return False
 
 
@@ -300,7 +305,13 @@ def main():
         return 0
 
     if fresh:
-        send_telegram(fresh)
+        delivered = send_telegram(fresh)
+        if not delivered:
+            # Do not remember these. If the alert did not reach you, the
+            # next run should try again rather than silently swallowing them.
+            log.error("alert not delivered, leaving state untouched so these "
+                      "roles are retried next run")
+            return 1
     else:
         log.info("nothing new, no alert sent")
 
