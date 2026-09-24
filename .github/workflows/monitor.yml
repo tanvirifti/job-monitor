@@ -1,0 +1,54 @@
+name: Check for new jobs
+
+on:
+  schedule:
+    # 07:00 and 17:00 UK time. Cron here is UTC, and GitHub sometimes runs
+    # scheduled jobs a few minutes late when it is busy. That is fine.
+    - cron: "0 6 * * *"
+    - cron: "0 16 * * *"
+  workflow_dispatch:        # lets you trigger a run by hand from the Actions tab
+
+permissions:
+  contents: write           # needed to commit the updated state file
+
+concurrency:
+  group: job-monitor
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Get the code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run the monitor
+        env:
+          ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
+          ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python monitor.py
+
+      - name: Remember what was seen
+        run: |
+          if [[ -n "$(git status --porcelain seen_jobs.json)" ]]; then
+            git config user.name  "job-monitor"
+            git config user.email "actions@github.com"
+            git add seen_jobs.json
+            git commit -m "Update seen jobs [skip ci]"
+            git push
+          else
+            echo "No change to state file"
+          fi
