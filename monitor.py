@@ -46,6 +46,36 @@ HEADERS = {
     )
 }
 
+def get_with_retry(url, attempts=3, pause=2.0):
+    """
+    Adzuna returns the occasional 502 or 503. Without a retry those queries
+    fail silently and that whole search is skipped for the day, which on one
+    run lost three of fourteen searches. Two extra attempts costs a few
+    seconds and recovers nearly all of them.
+
+    Only server-side errors and timeouts are retried. A 400 or 401 means the
+    request itself is wrong and will not improve by asking again.
+    """
+    last = None
+    for attempt in range(1, attempts + 1):
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=25)
+            if r.status_code in (502, 503, 504, 429):
+                last = f"{r.status_code} from server"
+                if attempt < attempts:
+                    time.sleep(pause * attempt)
+                    continue
+            r.raise_for_status()
+            return r
+        except requests.exceptions.RequestException as exc:
+            last = str(exc)
+            if attempt < attempts:
+                time.sleep(pause * attempt)
+                continue
+            raise
+    raise requests.exceptions.RequestException(last or "request failed")
+
+
 ADZUNA_ID = os.environ.get("ADZUNA_APP_ID", "").strip()
 ADZUNA_KEY = os.environ.get("ADZUNA_APP_KEY", "").strip()
 TG_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
@@ -144,11 +174,11 @@ def fetch_adzuna():
             "&content-type=application/json"
         )
         try:
-            r = requests.get(url, headers=HEADERS, timeout=25)
-            r.raise_for_status()
+            r = get_with_retry(url)
             results = r.json().get("results", [])
         except Exception as exc:
-            log.error("Adzuna query %r failed: %s", query, exc)
+            log.error("Adzuna query %r failed after retries: %s",
+                      query, str(exc)[:120])
             continue
 
         for j in results:
@@ -196,11 +226,11 @@ def fetch_civil_service():
             "&content-type=application/json"
         )
         try:
-            r = requests.get(url, headers=HEADERS, timeout=25)
-            r.raise_for_status()
+            r = get_with_retry(url)
             results = r.json().get("results", [])
         except Exception as exc:
-            log.error("public sector query %r failed: %s", employer, exc)
+            log.error("public sector query %r failed after retries: %s",
+                      employer, str(exc)[:120])
             continue
 
         for j in results:
