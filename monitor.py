@@ -227,14 +227,37 @@ def strip_tags(text):
 # ----------------------------------------------------------------- alerting
 
 
+TG_LIMIT = 3900          # Telegram allows 4096; leave room for the header
+MAX_MESSAGES = 15        # roughly 250 roles; a first run can be this big
+
+
+def _post(text):
+    r = requests.post(
+        f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
+        json={"chat_id": TG_CHAT, "text": text, "disable_web_page_preview": True},
+        timeout=20,
+    )
+    if r.status_code != 200:
+        log.error("Telegram refused the message: %s %s", r.status_code, r.text[:300])
+        return False
+    return True
+
+
 def send_telegram(jobs):
     """
-    Sends a plain-text message. Telegram's Markdown mode rejects perfectly
-    ordinary job titles (brackets, underscores, stray asterisks), which is
-    what produced a 400 on the first run. Plain text cannot fail that way.
+    Sends the roles, split across as many messages as it takes.
 
-    Returns True only if the message actually went out, so the caller knows
-    whether it is safe to mark these jobs as seen.
+    An earlier version built one message and cut it at 4,000 characters,
+    which quietly dropped most of a 153-role batch while still marking all
+    of them as seen. Nothing is truncated now: if the list does not fit, it
+    goes out as several messages.
+
+    Plain text, not Markdown. Telegram's Markdown parser rejects ordinary
+    job titles containing brackets or underscores, which produced a 400 on
+    an early run.
+
+    Returns True only if every message went out, so the caller knows whether
+    it is safe to record these as seen.
     """
     if not (TG_TOKEN and TG_CHAT):
         log.warning("Telegram not configured, printing instead")
@@ -242,41 +265,51 @@ def send_telegram(jobs):
             print(f"  {j['company']} | {j['title']} | {j['location']}\n    {j['url']}")
         return False
 
-    shown = jobs[: config.MAX_PER_ALERT]
-    extra = len(jobs) - len(shown)
-
-    lines = [f"{len(jobs)} new role{'s' if len(jobs) != 1 else ''}", ""]
-    for j in shown:
-        lines.append(j["title"])
+    # build one block per role, then pack blocks into messages
+    blocks = []
+    for j in jobs:
         bits = [b for b in (j["company"], j["location"][:38], j["source"]) if b]
-        lines.append(" | ".join(bits))
-        lines.append(j["url"])
-        lines.append("")
-    if extra:
-        lines.append(f"and {extra} more")
+        blocks.append(f"{j['title']}\n{' | '.join(bits)}\n{j['url']}")
 
-    text = "\n".join(lines)[:4000]
+    total = len(jobs)
+    messages, current = [], ""
+    for block in blocks:
+        candidate = (current + "\n\n" + block) if current else block
+        if len(candidate) > TG_LIMIT:
+            messages.append(current)
+            current = block
+        else:
+            current = candidate
+    if current:
+        messages.append(current)
 
-    try:
-        r = requests.post(
-            f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
-            json={
-                "chat_id": TG_CHAT,
-                "text": text,
-                "disable_web_page_preview": True,
-            },
-            timeout=20,
-        )
-        if r.status_code != 200:
-            # the body says exactly what Telegram objected to
-            log.error("Telegram refused the message: %s %s",
-                      r.status_code, r.text[:300])
-            return False
-        log.info("alert sent to Telegram")
-        return True
-    except Exception as exc:
-        log.error("Telegram request failed: %s", exc)
-        return False
+    delivered_count = total
+    dropped = 0
+    if len(messages) > MAX_MESSAGES:
+        delivered_count = sum(m.count("\n\n") + 1 for m in messages[:MAX_MESSAGES])
+        dropped = total - delivered_count
+        messages = messages[:MAX_MESSAGES]
+
+    ok = True
+    for i, body in enumerate(messages, 1):
+        header = f"{total} new role{'s' if total != 1 else ''}"
+        if len(messages) > 1:
+            header += f"  ({i} of {len(messages)})"
+        if not _post(header + "\n\n" + body):
+            ok = False
+            break
+        time.sleep(0.6)          # stay under Telegram's rate limit
+
+    if ok and dropped:
+        _post(f"{dropped} more were found but not listed. "
+              f"Widen EXCLUDE_WORDS or check the Actions log.")
+        log.warning("%d roles found but not sent, message cap reached", dropped)
+
+    if ok:
+        log.info("sent %d of %d role(s) across %d message(s)",
+                 delivered_count, total, len(messages))
+    # the caller records only what was actually delivered
+    return delivered_count if ok else 0
 
 
 def escape_md(s):
@@ -325,6 +358,13 @@ def main():
 
     if fresh:
         delivered = send_telegram(fresh)
+        if delivered and delivered < len(fresh):
+            # anything past the message cap was never seen, so forget it and
+            # let the next run offer it again
+            for j in fresh[delivered:]:
+                state.pop(job_id(j), None)
+            log.warning("%d role(s) were not sent and will be retried next run",
+                        len(fresh) - delivered)
         if not delivered:
             # Do not remember these. If the alert did not reach you, the
             # next run should try again rather than silently swallowing them.

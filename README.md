@@ -144,6 +144,13 @@ pointed at one inbox and read over IMAP. That is more robust than scraping
 seven sites, and it survives their redesigns. The trade-off is that alerts
 arrive on each site's schedule rather than instantly.
 
+**Alerts are split across several messages when there are many.** Telegram
+caps a message at 4,096 characters. An early version cut the text there,
+which quietly dropped 131 roles out of a 153-role batch while still marking
+all of them as seen, so they were never offered again. The sender now packs
+roles into as many messages as it takes and reports how many actually went
+out, and only those are recorded.
+
 **Adzuna is still the single biggest dependency.** One source means one point of failure. If
 their index lags or the free tier changes, the whole thing goes quiet. Worth
 glancing at the Actions log now and then rather than reading silence as
