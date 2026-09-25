@@ -13,7 +13,7 @@ live is worth more than checking twenty career pages by hand each week.
 ```
 GitHub Actions (07:00 UK, daily)
    │
-   ├── Adzuna API          11 role searches across UK job boards
+   ├── Adzuna API          55 searches, rotated across the week
    ├── Adzuna by employer  6 Tier 1 public sector employers by name
    ├── Alert inbox         LinkedIn, Bright Network, Gradcracker,
    │                       TargetJobs, Milkround, Civil Service, NHS
@@ -37,7 +37,7 @@ their listings in JavaScript, which needs a headless browser and turns a
 free job into a few hundred pounds a month.
 
 Aggregators already did that crawl. Adzuna covers thousands of UK employers
-and its free tier allows 1,000 calls a month; this uses about 510.
+and its free tier allows 1,000 calls a month; this uses about 540.
 
 Civil Service Jobs was the original second source, since it carries most of
 the Tier 1 list in one place. Scraping it returned nothing on the first run
@@ -99,14 +99,39 @@ python monitor.py             # normal run
 
 ## Tuning
 
-Everything you would want to change is in `config.py`:
+Everything you would want to change is in `config.py`.
 
-- `ADZUNA_QUERIES` — the searches. Each one is an API call, so keep an eye
-  on the monthly budget if you add many.
-- `INCLUDE_WORDS` / `EXCLUDE_WORDS` — what counts as relevant. The exclude
-  list is doing most of the work: without it, searching "analyst" returns
-  mostly senior and credit-risk roles.
-- `EXCLUDE_LOCATIONS` — both sources return non-UK roles.
+**`ADZUNA_DAILY_CORE`** — four terms that run every day regardless of
+rotation. Keep this short; every entry costs 30 calls a month.
+
+**`ADZUNA_QUERY_SETS`** — one set per weekday, Monday is 0. Fifty-five
+searches in total, weighted to the target order: Monday to Wednesday data
+engineering, Thursday and Friday analyst and BI, Saturday and Sunday entry
+routes and public sector.
+
+Three days on data engineering because those roles are advertised three
+ways: by title (data engineer, analytics engineer), by the work (ETL,
+pipelines, warehousing), and by platform (Azure, Databricks, Snowflake).
+Searching the title alone misses most of the other two.
+
+**`ADZUNA_MAX_DAYS_OLD`** — ten days. Deliberately longer than the
+seven-day rotation, so a rotating term still catches anything posted since
+it last ran, even if a run fails.
+
+**`ADZUNA_WHERE`** — blank means the whole of Great Britain. London-only
+was the original setting and it was wrong: ONS is in Newport, the Met
+Office in Exeter, the Environment Agency in Bristol.
+
+**`INCLUDE_WORDS` and `EXCLUDE_WORDS`** — what counts as relevant. The
+exclude list does most of the work; without it, searching "analyst" returns
+mostly senior and credit-risk roles.
+
+Two traps worth knowing about, both found the hard way. A broad exclude
+term can silently kill a target title: `intelligence analyst` also blocks
+`business intelligence analyst`, and bare `warehouse` also blocks
+`data warehouse developer`. Matching is on word boundaries, so `intern`
+no longer catches `internal auditor`, but check any new exclude term
+against your own target titles before adding it.
 
 After changing the filter, run `--dry-run` and read the output before
 letting it send anything.
