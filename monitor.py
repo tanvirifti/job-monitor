@@ -26,6 +26,7 @@ from urllib.parse import quote_plus
 import requests
 
 import config
+from email_reader import fetch_email_alerts
 
 # ----------------------------------------------------------------- setup
 
@@ -114,14 +115,31 @@ def fetch_adzuna():
         log.warning("Adzuna keys missing, skipping this source")
         return []
 
+    # One set per weekday keeps the monthly call count inside the free tier
+    # while covering far more search terms than a single fixed list could.
+    today = datetime.now(timezone.utc).weekday()
+    rotating = config.ADZUNA_QUERY_SETS.get(today, config.ADZUNA_QUERY_SETS[0])
+
+    # core terms run daily; the rotating set adds breadth without blowing
+    # through the monthly call allowance. dict.fromkeys keeps the order and
+    # drops any term that appears in both.
+    queries = list(dict.fromkeys(config.ADZUNA_DAILY_CORE + rotating))
+    log.info("weekday %d: %d core + %d rotating = %d searches",
+             today, len(config.ADZUNA_DAILY_CORE), len(rotating), len(queries))
+
     found = []
-    for query in config.ADZUNA_QUERIES:
+    for query in queries:
+        where = (
+            f"&where={quote_plus(config.ADZUNA_WHERE)}"
+            if config.ADZUNA_WHERE.strip()
+            else ""  # no where parameter means the whole of GB
+        )
         url = (
             "https://api.adzuna.com/v1/api/jobs/gb/search/1"
             f"?app_id={ADZUNA_ID}&app_key={ADZUNA_KEY}"
             f"&results_per_page=50"
             f"&what={quote_plus(query)}"
-            f"&where={quote_plus(config.ADZUNA_WHERE)}"
+            f"{where}"
             f"&max_days_old={config.ADZUNA_MAX_DAYS_OLD}"
             "&content-type=application/json"
         )
@@ -279,6 +297,7 @@ def main():
     raw = []
     raw += fetch_adzuna()
     raw += fetch_civil_service()
+    raw += fetch_email_alerts()
     log.info("fetched %d postings across all sources", len(raw))
 
     relevant = [j for j in raw if wanted(j)]

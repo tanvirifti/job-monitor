@@ -15,6 +15,8 @@ GitHub Actions (07:00 UK, daily)
    │
    ├── Adzuna API          11 role searches across UK job boards
    ├── Adzuna by employer  6 Tier 1 public sector employers by name
+   ├── Alert inbox         LinkedIn, Bright Network, Gradcracker,
+   │                       TargetJobs, Milkround, Civil Service, NHS
    │
    ├── filter              drops senior roles and anything outside the UK
    ├── compare             against seen_jobs.json, committed back each run
@@ -70,6 +72,8 @@ secret. Add four:
 | `ADZUNA_APP_KEY` | from step 1 |
 | `TELEGRAM_BOT_TOKEN` | from step 2 |
 | `TELEGRAM_CHAT_ID` | from step 2 |
+| `GMAIL_ADDRESS` | the alert inbox, optional |
+| `GMAIL_APP_PASSWORD` | 16-char app password, optional |
 
 Keys go in secrets, never in the code.
 
@@ -109,7 +113,13 @@ letting it send anything.
 
 ## Known limits
 
-**Everything depends on Adzuna.** One source means one point of failure. If
+**Sites that publish no API are read by email instead.** LinkedIn, Bright
+Network, Gradcracker and the rest all offer their own alerts, so those are
+pointed at one inbox and read over IMAP. That is more robust than scraping
+seven sites, and it survives their redesigns. The trade-off is that alerts
+arrive on each site's schedule rather than instantly.
+
+**Adzuna is still the single biggest dependency.** One source means one point of failure. If
 their index lags or the free tier changes, the whole thing goes quiet. Worth
 glancing at the Actions log now and then rather than reading silence as
 "nothing is being advertised".
